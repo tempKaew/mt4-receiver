@@ -121,6 +121,19 @@ curl -X POST https://YOUR-EDGE-FUNCTION-URL -H 'Content-Type: application/json' 
 ต่อไปนี้คือ SQL statements ที่โปรเจกต์ใช้ (หรือใช้เป็นตัวอย่างการตั้งค่า DB):
 
 ```sql
+-- updated table
+create table public.updated (
+  id SERIAL not null, -- SERIAL automatically creates the sequence and sets the default
+  title character varying not null,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  constraint updated_pkey primary key (id)
+) TABLESPACE pg_default;
+
+-- Insert ข้อมูลเริ่มต้น (run 1 ครั้ง)
+INSERT INTO updated (title, updated_at) 
+VALUES ('update', NOW());
+
 -- run_at table
 create table public.run_at (
   id SERIAL not null,
@@ -277,6 +290,16 @@ Deno.serve(async (req) => {
         });
       }
     }
+
+    // Update 'updated' table timestamp
+    const { error: updatedError } = await supabase
+      .from('updated')
+      .update({ 
+        updated_at: new Date().toISOString() 
+      })
+      .eq('title', 'update');
+
+    if (updatedError) throw updatedError;
 
     // ✅ Response สรุปผล
     const response = {
