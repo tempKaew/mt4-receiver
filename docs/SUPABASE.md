@@ -12,7 +12,7 @@
 - **หน้าที่:** รับ HTTP POST ที่มี JSON payload (รองรับทั้ง single object และ array) → ทำการ upsert ข้อมูลบัญชี (`accounts`) → upsert ประวัติ (`history`) โดยมี key สำหรับความเป็นเอกลักษณ์คือ `acc_number` ใน `accounts` และ `(account_id, date)` ใน `history`.
 - **Environment variables (ต้องตั้ง):**
   - `SUPABASE_URL`
-  - `SUPABASE_SERVICE_ROLE_KEY` (ใช้เพื่อเชื่อมต่อด้วย service role) 
+  - `SUPABASE_SERVICE_ROLE_KEY` (ใช้เพื่อเชื่อมต่อด้วย service role)
 
 ---
 
@@ -86,8 +86,18 @@ Behavior details:
   "success_count": 2,
   "error_count": 0,
   "results": [
-    { "success": true, "account_id": 1, "acc_number": 123, "date": "2025-12-16" },
-    { "success": true, "account_id": 2, "acc_number": 456, "date": "2025-12-16" }
+    {
+      "success": true,
+      "account_id": 1,
+      "acc_number": 123,
+      "date": "2025-12-16"
+    },
+    {
+      "success": true,
+      "account_id": 2,
+      "acc_number": 456,
+      "date": "2025-12-16"
+    }
   ]
 }
 ```
@@ -99,8 +109,21 @@ Behavior details:
   "total_received": 2,
   "success_count": 1,
   "error_count": 1,
-  "results": [ { "success": true, "account_id": 1, "acc_number": 123, "date": "2025-12-16" } ],
-  "errors": [ { "index": 1, "acc_number": 456, "error": "Missing required fields: acc_number or date" } ]
+  "results": [
+    {
+      "success": true,
+      "account_id": 1,
+      "acc_number": 123,
+      "date": "2025-12-16"
+    }
+  ],
+  "errors": [
+    {
+      "index": 1,
+      "acc_number": 456,
+      "error": "Missing required fields: acc_number or date"
+    }
+  ]
 }
 ```
 
@@ -131,7 +154,7 @@ create table public.updated (
 ) TABLESPACE pg_default;
 
 -- Insert ข้อมูลเริ่มต้น (run 1 ครั้ง)
-INSERT INTO updated (title, updated_at) 
+INSERT INTO updated (title, updated_at)
 VALUES ('update', NOW());
 
 -- run_at table
@@ -186,37 +209,77 @@ create table public.history (
 create unique INDEX IF not exists history_account_id_date_key on public.history using btree (account_id, date) TABLESPACE pg_default;
 ```
 
+update for ENABLE ROW LEVEL SECURITY
+
+```sql
+BEGIN;
+
+ALTER TABLE updated ENABLE ROW LEVEL SECURITY;
+
+-- -- SELECT policy สำหรับ anon (Realtime ต้องใช้)
+CREATE POLICY "updated_select_for_realtime_anon"
+ON updated
+FOR SELECT
+TO anon
+USING (true);
+
+-- (เลือกได้) SELECT สำหรับ authenticated
+CREATE POLICY "updated_select_authenticated"
+ON updated
+FOR SELECT
+TO authenticated
+USING (true);
+
+-- ปิดการเขียนจาก anon
+CREATE POLICY "updated_no_insert_anon"
+ON updated
+FOR INSERT
+TO anon
+WITH CHECK (false);
+
+CREATE POLICY "updated_no_update_anon"
+ON updated
+FOR UPDATE
+TO anon
+USING (false);
+
+COMMIT;
+```
+
 ---
 
 ## Edge Function ✨
 
 ```ts
 // supabase/functions/mt4-receiver/index.ts
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const supabase = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 });
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
   try {
     const rawData = await req.json();
-    
+
     // ✅ รองรับทั้ง array และ single object
     const dataArray = Array.isArray(rawData) ? rawData : [rawData];
-    
+
     if (dataArray.length === 0) {
-      return new Response(JSON.stringify({
-        error: 'Empty data array'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return new Response(
+        JSON.stringify({
+          error: "Empty data array",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
     }
 
     const results = [];
@@ -230,8 +293,8 @@ Deno.serve(async (req) => {
       if (!data.acc_number || !data.date) {
         errors.push({
           index: i,
-          acc_number: data.acc_number || 'unknown',
-          error: 'Missing required fields: acc_number or date'
+          acc_number: data.acc_number || "unknown",
+          error: "Missing required fields: acc_number or date",
         });
         continue;
       }
@@ -239,23 +302,25 @@ Deno.serve(async (req) => {
       try {
         // 1. Upsert Account
         const { data: account, error: accError } = await supabase
-          .from('accounts')
-          .upsert({
-            acc_number: data.acc_number,
-            balance: data.balance,
-            equity: data.equity,
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'acc_number' })
-          .select('id')
+          .from("accounts")
+          .upsert(
+            {
+              acc_number: data.acc_number,
+              balance: data.balance,
+              equity: data.equity,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "acc_number" }
+          )
+          .select("id")
           .single();
 
         if (accError) throw accError;
         const accountId = account.id;
 
         // 2. Upsert History
-        const { error: histError } = await supabase
-          .from('history')
-          .upsert({
+        const { error: histError } = await supabase.from("history").upsert(
+          {
             account_id: accountId,
             date: data.date,
             current_total_trade: data.current?.total_trade || 0,
@@ -270,8 +335,10 @@ Deno.serve(async (req) => {
             history_order_sell_count: data.history?.order_sell_count || 0,
             history_win: data.history?.win || 0,
             history_loss: data.history?.loss || 0,
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'account_id,date' });
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "account_id,date" }
+        );
 
         if (histError) throw histError;
 
@@ -279,25 +346,24 @@ Deno.serve(async (req) => {
           success: true,
           account_id: accountId,
           acc_number: data.acc_number,
-          date: data.date
+          date: data.date,
         });
-
       } catch (error) {
         errors.push({
           index: i,
           acc_number: data.acc_number,
-          error: error.message || 'Unknown error'
+          error: error.message || "Unknown error",
         });
       }
     }
 
     // Update 'updated' table timestamp
     const { error: updatedError } = await supabase
-      .from('updated')
-      .update({ 
-        updated_at: new Date().toISOString() 
+      .from("updated")
+      .update({
+        updated_at: new Date().toISOString(),
       })
-      .eq('title', 'update');
+      .eq("title", "update");
 
     if (updatedError) throw updatedError;
 
@@ -307,23 +373,25 @@ Deno.serve(async (req) => {
       success_count: results.length,
       error_count: errors.length,
       results,
-      ...(errors.length > 0 && { errors })
+      ...(errors.length > 0 && { errors }),
     };
 
     return new Response(JSON.stringify(response), {
       status: errors.length === dataArray.length ? 500 : 200,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" },
     });
-
   } catch (error) {
-    console.error('Error:', error);
-    return new Response(JSON.stringify({
-      error: 'Failed to process request',
-      details: error.message || 'Unknown error'
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    console.error("Error:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to process request",
+        details: error.message || "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 });
 ```
