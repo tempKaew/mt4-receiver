@@ -144,104 +144,152 @@ curl -X POST https://YOUR-EDGE-FUNCTION-URL -H 'Content-Type: application/json' 
 ต่อไปนี้คือ SQL statements ที่โปรเจกต์ใช้ (หรือใช้เป็นตัวอย่างการตั้งค่า DB):
 
 ```sql
--- updated table
-create table public.updated (
-  id SERIAL not null, -- SERIAL automatically creates the sequence and sets the default
-  title character varying not null,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint updated_pkey primary key (id)
-) TABLESPACE pg_default;
+-- =========================
+-- updated (realtime trigger)
+-- =========================
+CREATE TABLE IF NOT EXISTS public.updated (
+  id SERIAL PRIMARY KEY,
+  title varchar NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
 
--- Insert ข้อมูลเริ่มต้น (run 1 ครั้ง)
-INSERT INTO updated (title, updated_at)
-VALUES ('update', NOW());
+-- run once
+INSERT INTO public.updated (title)
+SELECT 'update'
+WHERE NOT EXISTS (SELECT 1 FROM public.updated);
 
--- run_at table
-create table public.run_at (
-  id SERIAL not null,
-  title character varying not null,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint run_at_pkey primary key (id)
-) TABLESPACE pg_default;
+-- =========================
+-- run_at
+-- =========================
+CREATE TABLE IF NOT EXISTS public.run_at (
+  id SERIAL PRIMARY KEY,
+  title varchar NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
 
--- accounts table
-create table public.accounts (
-  id SERIAL not null,
-  acc_number bigint not null,
-  name character varying null,
-  email character varying null,
-  balance numeric null default 0,
-  equity numeric null default 0,
-  run_at_id integer null,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint accounts_pkey primary key (id),
-  constraint accounts_run_at_id_fkey foreign KEY (run_at_id) references run_at (id) on delete set null
-) TABLESPACE pg_default;
+-- =========================
+-- accounts
+-- =========================
+CREATE TABLE IF NOT EXISTS public.accounts (
+  id SERIAL PRIMARY KEY,
+  acc_number bigint NOT NULL,
+  name varchar,
+  email varchar,
+  balance numeric DEFAULT 0,
+  equity numeric DEFAULT 0,
+  run_at_id integer,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  CONSTRAINT accounts_run_at_id_fkey
+    FOREIGN KEY (run_at_id)
+    REFERENCES public.run_at (id)
+    ON DELETE SET NULL
+);
 
-create unique INDEX IF not exists accounts_acc_number_key on public.accounts using btree (acc_number) TABLESPACE pg_default;
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_acc_number_key
+ON public.accounts (acc_number);
 
--- history table
-create table public.history (
-  id SERIAL not null,
-  account_id integer not null,
-  date date not null,
-  current_total_trade integer null default 0,
-  current_profit numeric null default 0,
-  current_lot numeric null default 0,
-  current_order_buy_count integer null default 0,
-  current_order_sell_count integer null default 0,
-  history_total_trade integer null default 0,
-  history_profit numeric null default 0,
-  history_lot numeric null default 0,
-  history_order_buy_count integer null default 0,
-  history_order_sell_count integer null default 0,
-  history_win integer null default 0,
-  history_loss integer null default 0,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint history_pkey primary key (id),
-  constraint history_account_id_fkey foreign KEY (account_id) references accounts (id) on delete CASCADE
-) TABLESPACE pg_default;
+-- =========================
+-- history
+-- =========================
+CREATE TABLE IF NOT EXISTS public.history (
+  id SERIAL PRIMARY KEY,
+  account_id integer NOT NULL,
+  date date NOT NULL,
+  current_total_trade integer DEFAULT 0,
+  current_profit numeric DEFAULT 0,
+  current_lot numeric DEFAULT 0,
+  current_order_buy_count integer DEFAULT 0,
+  current_order_sell_count integer DEFAULT 0,
+  history_total_trade integer DEFAULT 0,
+  history_profit numeric DEFAULT 0,
+  history_lot numeric DEFAULT 0,
+  history_order_buy_count integer DEFAULT 0,
+  history_order_sell_count integer DEFAULT 0,
+  history_win integer DEFAULT 0,
+  history_loss integer DEFAULT 0,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  CONSTRAINT history_account_id_fkey
+    FOREIGN KEY (account_id)
+    REFERENCES public.accounts (id)
+    ON DELETE CASCADE
+);
 
-create unique INDEX IF not exists history_account_id_date_key on public.history using btree (account_id, date) TABLESPACE pg_default;
+CREATE UNIQUE INDEX IF NOT EXISTS history_account_id_date_key
+ON public.history (account_id, date);
+
+-- add updated table to realtime
+ALTER PUBLICATION supabase_realtime
+ADD TABLE public.updated;
+
+-- replica identity (สำคัญมาก)
+ALTER TABLE public.updated
+REPLICA IDENTITY FULL;
 ```
 
 update for ENABLE ROW LEVEL SECURITY
 
 ```sql
+-- Enable RLS on the tables used by the project
 BEGIN;
 
-ALTER TABLE updated ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.updated ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.run_at ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.history ENABLE ROW LEVEL SECURITY;
 
--- -- SELECT policy สำหรับ anon (Realtime ต้องใช้)
-CREATE POLICY "updated_select_for_realtime_anon"
-ON updated
+-- allow realtime read
+CREATE POLICY "updated_select_anon"
+ON public.updated
 FOR SELECT
 TO anon
 USING (true);
 
--- (เลือกได้) SELECT สำหรับ authenticated
-CREATE POLICY "updated_select_authenticated"
-ON updated
-FOR SELECT
-TO authenticated
-USING (true);
-
--- ปิดการเขียนจาก anon
+-- block anon write
 CREATE POLICY "updated_no_insert_anon"
-ON updated
+ON public.updated
 FOR INSERT
 TO anon
 WITH CHECK (false);
 
 CREATE POLICY "updated_no_update_anon"
-ON updated
+ON public.updated
 FOR UPDATE
 TO anon
 USING (false);
+
+CREATE POLICY "run_at_all"
+ON "public"."run_at"
+TO public
+using (true);
+
+CREATE POLICY "accounts_select_anon"
+ON public.accounts
+FOR SELECT
+TO anon
+USING (true);
+
+CREATE POLICY "accounts_update_anon"
+ON public.accounts
+FOR UPDATE
+TO anon
+USING (true)
+WITH CHECK (true);
+
+CREATE POLICY "accounts_delete_anon"
+ON public.accounts
+FOR DELETE
+TO anon
+USING (true);
+
+CREATE POLICY "history_select_anon"
+ON public.history
+FOR SELECT
+TO anon
+USING (true);
 
 COMMIT;
 ```
