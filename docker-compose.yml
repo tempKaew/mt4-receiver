@@ -5,6 +5,8 @@ services:
       - "80:3000"
     volumes:
       - ./db:/db
+    env_file:
+      - ./api/.env
     environment:
       - PORT=3000
     restart: unless-stopped

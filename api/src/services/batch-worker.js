@@ -1,4 +1,3 @@
-import fetch from "node-fetch";
 import { getPending, markSent } from "../database.js";
 import { config } from "../config.js";
 import { getNextBatchTime } from "../utils/time.js";

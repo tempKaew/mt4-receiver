@@ -1,10 +1,10 @@
-FROM node:20-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package.json ./
-RUN npm install --only=production
+RUN npm install --omit=dev
 
 # Copy application code
 COPY . .
